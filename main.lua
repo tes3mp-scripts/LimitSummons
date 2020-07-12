@@ -1,7 +1,5 @@
 local Summons = {}
 
-Summons.scriptName = "LimitSummons"
-
 Summons.defaultConfig = {
     limit = {
         enable = false,
@@ -14,7 +12,7 @@ Summons.defaultConfig = {
     }
 }
 
-Summons.config = Summons.defaultConfig--jsonConfig.Load(Summons.scriptName, Summons.defaultConfig)
+Summons.config = jsonConfig.Load("LimitSummons", Summons.defaultConfig)
 
 Summons.penalty = {}
 Summons.mapSummonPid = {}
@@ -145,7 +143,6 @@ end
 function Summons.destroyPenalty(pid)
     local recordStore = RecordStores["spell"]
     local id = Summons.penalty[pid]
-    
     Summons.penalty[pid] = nil
 
     if id ~= nil then
@@ -162,51 +159,42 @@ function Summons.destroyPenalty(pid)
     tableHelper.cleanNils(Players[pid].data.spellbook)
 end
 
-
-
-function Summons.OnObjectSpawn(eventStatus, pid, cellDescription, objects)
+customEventHooks.registerValidator("OnObjectSpawn", function (eventStatus, pid, cellDescription, objects)
     if not eventStatus.validCustomHandlers then return end
     for uniqueIndex, object in pairs(objects) do
-        if object.summon then
-            if object.summon.duration > 0 then
-                tes3mp.LogMessage(enumerations.log.INFO,
+        if object.summon and object.summon.duration > 0 then
+            tes3mp.LogMessage(enumerations.log.INFO,
                 string.format("Starting timer for %s after %d seconds", uniqueIndex, object.summon.duration))
-                timers.Timeout(
-                    function()
-                        SummonsTimer(pid, uniqueIndex, cellDescription)
-                    end,
-                    time.seconds(object.summon.duration) + 100
-                )
+            timers.Timeout(
+                function()
+                    SummonsTimer(pid, uniqueIndex, cellDescription)
+                end,
+                time.seconds(object.summon.duration)
+            )
 
-                if object.hasPlayerSummoner then
-                    local summonerPid = object.summon.summonerPid
-                    local count = Summons.countSummons(summonerPid)
-                    if Summons.config.limit.enable
-                        and count >= Summons.config.limit.count
-                    then
-                        Summons.removeFromNewCell(uniqueIndex, cellDescription)
-                        return customEventHooks.makeEventStatus(false, false)
-                    end
-                    Summons.mapSummonPid[uniqueIndex] = summonerPid
-                    count = count + 1
-                    if Summons.config.penalty.enable then
-                        Summons.updatePenalty(summonerPid, count)
-                    end
+            if object.hasPlayerSummoner then
+                local summonerPid = object.summon.summonerPid
+                local count = Summons.countSummons(summonerPid)
+                if Summons.config.limit.enable
+                    and count >= Summons.config.limit.count
+                then
+                    Summons.removeFromNewCell(uniqueIndex, cellDescription)
+                    return customEventHooks.makeEventStatus(false, false)
+                end
+                Summons.mapSummonPid[uniqueIndex] = summonerPid
+                count = count + 1
+                if Summons.config.penalty.enable then
+                    Summons.updatePenalty(summonerPid, count)
                 end
             end
         end
     end
-end
+end)
 
-customEventHooks.registerValidator("OnObjectSpawn", Summons.OnObjectSpawn)
-
-
-function Summons.OnObjectDelete(eventStatus, pid)
+customEventHooks.registerHandler("OnObjectDelete", function (eventStatus, pid, cellDescription, objects)
     if not eventStatus.validCustomHandlers then return end
-    tes3mp.ReadReceivedObjectList()
 
-    for objectIndex = 0, tes3mp.GetObjectListSize() - 1 do
-        local uniqueIndex = tes3mp.GetObjectRefNum(objectIndex) .. "-" .. tes3mp.GetObjectMpNum(objectIndex)
+    for uniqueIndex in pairs(objects) do
         local summonerPid = Summons.mapSummonPid[uniqueIndex]
         if summonerPid ~= nil then
             tes3mp.SendMessage(summonerPid, string.format("Despawned %s \n", uniqueIndex))
@@ -214,31 +202,23 @@ function Summons.OnObjectDelete(eventStatus, pid)
             Summons.updatePenalty(summonerPid, Summons.countSummons(summonerPid))
         end
     end
-end
+end)
 
-customEventHooks.registerValidator("OnObjectDelete", Summons.OnObjectDelete)
-
-
-function Summons.OnPlayerDisconnect(eventStatus, pid)
+customEventHooks.registerValidator("OnPlayerDisconnect", function (eventStatus, pid)
     if not eventStatus.validCustomHandlers then return end
     Summons.destroyPenalty(pid)
-end
+end)
 
-customEventHooks.registerValidator("OnPlayerDisconnect", Summons.OnPlayerDisconnect)
-
-
-function Summons.OnServerExit(eventStatus)
+customEventHooks.registerHandler("OnServerExit", function (eventStatus)
     if not eventStatus.validCustomHandlers then return end
     for pid, player in pairs(Players) do
         Summons.destroyPenalty(pid)
-        for uniqueIndex, summon in pairs(Players[pid].summons) do
+        for uniqueIndex in pairs(player.summons) do
             local cell = logicHandler.GetCellContainingActor(uniqueIndex)
             Summons.removeFromNewCell(uniqueIndex, cell.description)
         end
     end
-end
-
-customEventHooks.registerHandler("OnServerExit", Summons.OnServerExit)
+end)
 
 
 return Summons
